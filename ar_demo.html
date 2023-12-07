@@ -155,7 +155,6 @@
         }
 
         function handleUserPublished(user, mediaType) {
-            console.log("V-CUBE: user publish");
             const id = user.uid;
             remoteUsers[id] = user;
             subscribe(user, mediaType);
