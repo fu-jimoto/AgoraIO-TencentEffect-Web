@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>webar demo</title>
+    <style>
+        #remote-playerlist, #output {
+            width: 480px;
+        }
+        .player {
+            width: 480px;
+            height: 320px;
+        }
+        #source {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="remote-playerlist"></div>
+    <video id="output"  autoplay playsinline></video>
+    <video id="source" autoplay></video>
+
+    <script src="./jquery-3.4.1.min.js"></script>
+    <script charset="utf-8" src="./webar-sdk.umd.js"></script>
+    <script src="./sha256.min.js"></script>
+    <script src="./AgoraRTC_N-4.15.0.js"></script>
+    <script>
+        const APPID       = '';
+        const LICENSE_KEY = '';
+        const token       = '';
+        const getSignature = function () {
+                const timestamp = Math.round(new Date().getTime() / 1000);
+                const signature = sha256(timestamp + token + APPID + timestamp).toUpperCase();
+                return {
+                    signature,
+                    timestamp
+                };
+            };
+        var effectList
+        var remoteUsers = {};
+        var client;
+
+        init()
+
+        async function getInstance() {
+            const config = {
+                module: {
+                    beautify: true,
+                    segmentation: true
+                },
+                auth: {
+                    licenseKey: LICENSE_KEY,
+                    appId: APPID,
+                    authFunc: getSignature
+                },
+                beautify: {"whiten":0.5,"dermabrasion":1,"lift":0,"shave":0,"eye":1,"chin":0}
+            }
+            return new Promise((resolve) => {
+                const sdk = new window.AR.ArSdk(config)
+                sdk.on('resourceReady', async () => {
+                    effectList = await sdk.getEffectList({ // get preset effect list
+                        Type: 'Preset'
+                    })
+                    console.log(effectList)
+                    resolve(sdk)
+                })
+            })
+        }
+        async function getStream(videoConfig) {
+            let deviceId = (await navigator.mediaDevices.enumerateDevices()).find(t => t.kind ==="videoinput" && t.label.toLocaleLowerCase().indexOf('obs') === -1).deviceId
+            let config = videoConfig || {
+                    width: 640,
+                    height: 480,
+                    facingMode: 'user'
+            }
+            config.deviceId = { exact: deviceId}
+            return navigator.mediaDevices.getUserMedia({
+                video: config
+            })
+        }
+        async function init() {
+            let arSdk = await getInstance()
+            console.log('tencentAr preload result:', arSdk, effectList)
+            window.arSdk = arSdk
+
+            let inputStream = await getStream()
+            let sourceVideo = document.getElementById('source')
+            let outputVideo = document.getElementById('output')
+            sourceVideo.srcObject = inputStream
+            arSdk.initCore({
+                input: inputStream
+            })
+            arSdk.on('ready', async () => {
+                let outputStream = await arSdk.getOutput(15)
+                let out = new MediaStream()
+                out.addTrack(outputStream.getVideoTracks()[0])
+                outputVideo.srcObject = out
+                setOption()
+                initAgora(outputStream)
+            })
+        }
+        // set effect
+        async function setOption() {
+            arSdk.setEffect({
+                //id: 'AE3C81806521B49B', // check global variable effectList for detail
+                id: 'C536317E53997405',
+                intensity: 1
+            })
+        }
+
+        async function initAgora(outputStream){
+            var localTracks = {
+                    videoTrack: null
+                };
+            var options = {
+                    appid:   "",
+                    channel: "sample",
+                    uid:     null,
+                    token:   null
+                };
+            client = AgoraRTC.createClient({
+                            mode: "rtc",
+                            codec: "vp8"
+                        });
+
+            client.on("user-published", handleUserPublished);
+            client.on("user-unpublished", handleUserUnpublished);
+
+            [options.uid, localTracks.videoTrack] = await Promise.all([
+                client.join(options.appid, options.channel, options.token || null, options.uid || null),
+                AgoraRTC.createCustomVideoTrack({
+                mediaStreamTrack: outputStream.getVideoTracks()[0]
+            })]);
+            await client.publish(Object.values(localTracks));
+        }
+
+
+        async function subscribe(user, mediaType) {
+            const uid = user.uid;
+            await client.subscribe(user, mediaType);
+            if (mediaType === 'video') {
+                const player = $(`
+                    <div id="player-wrapper-${uid}">
+                    <p class="player-name">remoteUser(${uid})</p>
+                    <div id="player-${uid}" class="player"></div>
+                    </div>
+                `);
+                $("#remote-playerlist").append(player);
+                user.videoTrack.play(`player-${uid}`);
+            }
+        }
+
+        function handleUserPublished(user, mediaType) {
+            console.log("V-CUBE: user publish");
+            const id = user.uid;
+            remoteUsers[id] = user;
+            subscribe(user, mediaType);
+        }
+
+        function handleUserUnpublished(user) {
+            const id = user.uid;
+            delete remoteUsers[id];
+            $(`#player-wrapper-${id}`).remove();
+        }
+
+
+    </script>
+</body>
+</html>
